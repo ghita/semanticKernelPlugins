@@ -1,0 +1,1 @@
+Crate a  D:\dev\LLM\semantic-kernel\semantic-kernel\dotnet\samples\GettingStartedWithAgents\Step02_Plugins.cs
