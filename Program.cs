@@ -5,24 +5,31 @@ using FirstPlugin;
 using Microsoft.SemanticKernel.ChatCompletion;
 using OpenAI.Assistants;
 using OpenAI.Chat;
+using Microsoft.SemanticKernel.Plugins.Web.Brave;
+using Microsoft.SemanticKernel.Plugins.Web;
 
 var apiKey = Environment.GetEnvironmentVariable("OPENAI_API_ApiKey");
 var endpoint = Environment.GetEnvironmentVariable("OPENAI_API_Endpoint");
+var apiKeyBrave = Environment.GetEnvironmentVariable("BRAVE_API_KEY");
 
 // Create and configure the kernel
 var builder = Kernel.CreateBuilder();
-builder.AddAzureOpenAIChatCompletion(deploymentName: "gpt-4",
+builder.AddAzureOpenAIChatCompletion(deploymentName: "gpt-4o-mini",
                 endpoint: endpoint!,
                 apiKey: apiKey!);
 
 var kernel = builder.Build();
+
+var braveConnector = new BraveConnector(apiKeyBrave!);
+var bravePlugin = new WebSearchEnginePlugin(braveConnector);
 
 ChatCompletionAgent agent = CreateAgentWithPlugin(
                 plugins: [
                     KernelPluginFactory.CreateFromType<LightsPlugin>(), 
                     KernelPluginFactory.CreateFromType<SoftwareBuilderPlugin>(), 
                     KernelPluginFactory.CreateFromType<GoogleKeepPlugin>(),
-                    KernelPluginFactory.CreateFromType<GoogleFitnessPlugin>()
+                    KernelPluginFactory.CreateFromType<GoogleFitnessPlugin>(),
+                    KernelPluginFactory.CreateFromObject(bravePlugin),
                 ],
                 instructions: "Respond to user questions as an assistant",
                 name: "Main-Assistant");
@@ -44,6 +51,11 @@ bool FunctionCallsPresent(Microsoft.SemanticKernel.ChatMessageContent message)
         return true;
     }
     return false;
+}
+
+static IEnumerable<FunctionResultContent> GetFunctionCalls(Microsoft.SemanticKernel.ChatMessageContent messageContent)
+{
+    return messageContent.Items.OfType<FunctionResultContent>();
 }
 
 ChatCompletionAgent CreateAgentWithPlugin(
@@ -86,8 +98,8 @@ async Task InvokeAgentAsync(ChatCompletionAgent agent, AgentThread thread)
     {
         await foreach (var response in agent.InvokeAsync(message, thread))
         {
+            WriteFunctionCalls(response);
             WriteAgentChatMessage(response);
-            Console.WriteLine("Functin calls: {0}", FunctionCallsPresent(response));
         }
     }
     catch (Exception ex)
@@ -96,6 +108,75 @@ async Task InvokeAgentAsync(ChatCompletionAgent agent, AgentThread thread)
         Console.WriteLine($"Error invoking chat completion: {ex.Message}");
         Console.ResetColor();
         return;
+    }
+}
+
+void WriteFunctionCalls(AgentResponseItem<Microsoft.SemanticKernel.ChatMessageContent> response)
+{
+    var functionCallResults = GetFunctionCalls(response.Message);
+    foreach (var functionResult in functionCallResults)
+    {
+        Console.ForegroundColor = ConsoleColor.Yellow;
+        Console.WriteLine($"Function call: {functionResult?.PluginName} - {functionResult?.FunctionName}");
+        
+        // Display function call details
+        Console.WriteLine($"  Call ID: {functionResult?.CallId}");
+        Console.WriteLine($"  Plugin Name: {functionResult?.PluginName}");
+        Console.WriteLine($"  Function Name: {functionResult?.FunctionName}");
+        Console.ResetColor();
+
+        // Check if the function call has a result and display it with more context
+        if (functionResult?.Result != null)
+        {
+            Console.ForegroundColor = ConsoleColor.Cyan;
+            Console.WriteLine($"  Function result: {functionResult.Result}");
+            
+            // Try to extract more detailed information about the result
+            try
+            {
+                var resultType = functionResult.Result.GetType().Name;
+                Console.WriteLine($"  Result Type: {resultType}");
+                
+                // For complex objects like collections, provide more detail
+                if (functionResult.Result is System.Collections.IEnumerable collection && 
+                    !(functionResult.Result is string))
+                {
+                    int itemCount = 0;
+                    foreach (var item in collection)
+                    {
+                        itemCount++;
+                        if (itemCount <= 3) // Limit to first 3 items to avoid excessive output
+                        {
+                            Console.WriteLine($"    Item {itemCount}: {item}");
+                        }
+                    }
+                    
+                    if (itemCount > 3)
+                    {
+                        Console.WriteLine($"    ... and {itemCount - 3} more items");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"  (Error parsing result details: {ex.Message})");
+            }
+            
+            Console.ResetColor();
+        }
+        else
+        {
+            Console.ForegroundColor = ConsoleColor.DarkYellow;
+            Console.WriteLine("  No result returned");
+            Console.ResetColor();
+        }
+        
+        Console.WriteLine(); // Add spacing between different function calls
+    }
+
+    if (!functionCallResults.Any())
+    {
+        Console.WriteLine("No function calls found.");
     }
 }
 

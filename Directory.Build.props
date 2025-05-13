@@ -1,0 +1,6 @@
+<Project>
+  <PropertyGroup>
+    <!-- Suppress specific warnings project-wide. Add more codes separated by semicolons. -->
+    <NoWarn>SKEXP0050</NoWarn>
+  </PropertyGroup>
+</Project>
